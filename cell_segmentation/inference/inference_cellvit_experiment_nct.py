@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 # CellViT Inference Method for Patch-Wise Inference on NCT set
-# Without WSI
 
 import argparse
 import inspect
@@ -49,30 +48,38 @@ from cell_segmentation.utils.metrics import (
 from cell_segmentation.utils.post_proc_cellvit import calculate_instances
 from cell_segmentation.utils.tools import cropping_center, pair_coordinates
 from models.segmentation.cell_segmentation.cellvit import (
+    CellViT,
     CellViT256,
     CellViTSAM,
 )
 from models.segmentation.cell_segmentation.cellvit_shared import (
     CellViT256Shared,
     CellViTSAMShared,
+    CellViTShared,
 )
 from utils.logger import Logger
 
-class InferenceCellViT:
+class InferenceNCT:
     def __init__(
         self,
-        run_dir: Union[Path, str],
+        model_path: Union[Path, str],
+        dataset_path: Union[Path, str],
+        outdir: Union[Path, str],
         gpu: int,
+        overlap: int = 0,
         magnification: int = 20,
-        checkpoint_name: str = "model_best.pth",
     ) -> None:
-        """Inference for NCT dataset with CellViT models
+        """Inference for HoverNet for NCT dataset
 
         Args:
-            run_dir (Union[Path, str]): logging directory with checkpoints and configs
-            gpu (int): CUDA GPU device to use for inference
+            model_path (Union[Path, str]): Path to model checkpoint
+            dataset_path (Union[Path, str]): Path to dataset
+            outdir (Union[Path, str]): Output directory
+            gpu (int): CUDA GPU id to use
+            patching (bool, optional): If dataset should be pacthed to 256px. Defaults to False.
+            overlap (int, optional): If overlap should be used. Recommed (next to no overlap) is 64 px. Overlap in px.
+                If overlap is used, patching must be True. Defaults to 0.
             magnification (int, optional): Dataset magnification. Defaults to 40.
-            checkpoint_name (str, optional): Select name of the model to load. Defaults to model_best.pth
         """
         self.run_dir = Path(run_dir)
         self.device = f"cuda:{gpu}"
@@ -224,7 +231,7 @@ class InferenceCellViT:
         DataLoader,
         dict,
     ]:
-        """Setup patch inference by defining a patch-wise datalaoder and loading the model checkpoint
+        """Setup patch inference by defining a patch-wise dataloader and loading the model checkpoint
 
         Args:
             test_folds (List[int], optional): Test fold to use. Otherwise defined folds from config.yaml (in run_dir) are loaded. Defaults to None.
@@ -1194,41 +1201,58 @@ class InferenceCellViT:
 
 
 # CLI
-class InferenceCellViTParser:
+class InferenceCellViTNCTParser:
     def __init__(self) -> None:
         parser = argparse.ArgumentParser(
             formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-            description="Perform CellViT inference for given run-directory with model checkpoints and logs",
+            description="Perform CellViT inference for given NCT set",
         )
 
         parser.add_argument(
-            "--run_dir",
+            "--model",
             type=str,
-            help="Logging directory of a training run.",
-            required=True,
+            help="Model checkpoint file that is used for inference",
+            default="/mnt/volume/mathias/pretrained_models/XX.pth",
         )
         parser.add_argument(
-            "--checkpoint_name",
+            "--dataset",
             type=str,
-            help="Name of the checkpoint.  Either select 'best_checkpoint.pth',"
-            "'latest_checkpoint.pth' or one of the intermediate checkpoint names,"
-            "e.g., 'checkpoint_100.pth'",
-            default="model_best.pth",
+            help="Path to NCT dataset.",
+            default="/mnt/volume/mathias/datasets/NCT",
         )
         parser.add_argument(
-            "--gpu", type=int, help="Cuda-GPU ID for inference", default=5
+            "--outdir",
+            type=str,
+            help="Path to output directory to store results.",
+            default="/mnt/volume/sabrina/inference_results",
+        )
+        parser.add_argument(
+            "--gpu", type=int, help="Cuda-GPU ID for inference. Default: 0", default=0
         )
         parser.add_argument(
             "--magnification",
             type=int,
             help="Dataset Magnification. Either 20 or 40. Default: 40",
             choices=[20, 40],
-            default=40,
+            default=20,
+        )
+        parser.add_argument(
+            "--patching",
+            type=bool,
+            help="Patch to 256px images. Default: False",
+            default=False,
+        )
+        parser.add_argument(
+            "--overlap",
+            type=int,
+            help="Patch overlap, just valid for patching",
+            default=64,
         )
         parser.add_argument(
             "--plots",
-            action="store_true",
-            help="Generate inference plots in run_dir",
+            type=bool,
+            help="Generate result plots. Default: False",
+            default=True,
         )
 
         self.parser = parser
@@ -1239,17 +1263,17 @@ class InferenceCellViTParser:
 
 
 if __name__ == "__main__":
-    configuration_parser = InferenceCellViTParser()
+    configuration_parser = InferenceCellViTNCTParser()
     configuration = configuration_parser.parse_arguments()
     print(configuration)
-    inf = InferenceCellViT(
-        run_dir=configuration["run_dir"],
-        checkpoint_name=configuration["checkpoint_name"],
-        gpu=configuration["gpu"],
-        magnification=configuration["magnification"],
-    )
-    model, dataloader, conf = inf.setup_patch_inference()
 
-    inf.run_patch_inference(
-        model, dataloader, conf, generate_plots=configuration["plots"]
+    inf = InferenceNCT(
+        model_path=configuration["model"],
+        dataset_path=configuration["dataset"],
+        outdir=configuration["outdir"],
+        gpu=configuration["gpu"],
+        patching=configuration["patching"],
+        magnification=configuration["magnification"],
+        overlap=configuration["overlap"],
     )
+    inf.run_inference(generate_plots=configuration["plots"])

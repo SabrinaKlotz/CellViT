@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 # CellVit Experiment Class for NCT Dataset
 
-from cell_segmentation.experiments.experiment_base import BaseExperiment
-
 import copy
 import datetime
 import inspect
@@ -46,7 +44,6 @@ from wandb.sdk.lib.runid import generate_id
 from base_ml.base_early_stopping import EarlyStopping
 from base_ml.base_experiment import BaseExperiment
 from base_ml.base_loss import retrieve_loss_fn
-from base_ml.base_trainer import BaseTrainer
 from cell_segmentation.datasets.base_cell import CellDataset
 from cell_segmentation.datasets.dataset_coordinator import select_dataset
 from cell_segmentation.trainer.trainer_cellvit import CellViTTrainer
@@ -63,7 +60,7 @@ from models.segmentation.cell_segmentation.cellvit_shared import (
 from utils.tools import close_logger
 
 
-class ExperimentCellVitNCT(BaseExperiment):
+class ExperimentCellViTNCT(BaseExperiment):
     def __init__(self, default_conf: dict, checkpoint=None) -> None:
         super().__init__(default_conf, checkpoint)
         self.load_dataset_setup(dataset_path=self.default_conf["data"]["dataset_path"])
@@ -214,8 +211,7 @@ class ExperimentCellVitNCT(BaseExperiment):
 
         # start Training
         self.logger.info("Instantiate Trainer")
-        trainer_fn = self.get_trainer()
-        trainer = trainer_fn(
+        trainer = CellViTTrainer(
             model=model,
             loss_fn_dict=loss_fn_dict,
             optimizer=optimizer,
@@ -266,7 +262,6 @@ class ExperimentCellVitNCT(BaseExperiment):
         """Load the configuration of the cell segmentation dataset.
 
         The dataset must have a dataset_config.yaml file in their dataset path with the following entries:
-            * tissue_types: describing the present tissue types with corresponding integer
             * nuclei_types: describing the present nuclei types with corresponding integer
 
         Args:
@@ -280,7 +275,7 @@ class ExperimentCellVitNCT(BaseExperiment):
     def get_loss_fn(self, loss_fn_settings: dict) -> dict:
         """Create a dictionary with loss functions for all branches
 
-        Branches: "nuclei_binary_map", "hv_map", "nuclei_type_map", "tissue_types"
+        Branches: "nuclei_binary_map", "hv_map", "nuclei_type_map"
 
         Args:
             loss_fn_settings (dict): Dictionary with the loss function settings. Structure
@@ -339,10 +334,6 @@ class ExperimentCellVitNCT(BaseExperiment):
                 dice:
                     loss_fn: dice_loss
                     weight: 1
-            tissue_types
-                ce:
-                    loss_fn: nn.CrossEntropyLoss()
-                    weight: 1
         """
         loss_fn_dict = {}
         if "nuclei_binary_map" in loss_fn_settings.keys():
@@ -383,18 +374,6 @@ class ExperimentCellVitNCT(BaseExperiment):
             loss_fn_dict["nuclei_type_map"] = {
                 "bce": {"loss_fn": retrieve_loss_fn("xentropy_loss"), "weight": 1},
                 "dice": {"loss_fn": retrieve_loss_fn("dice_loss"), "weight": 1},
-            }
-        if "tissue_types" in loss_fn_settings.keys():
-            loss_fn_dict["tissue_types"] = {}
-            for loss_name, loss_sett in loss_fn_settings["tissue_types"].items():
-                parameters = loss_sett.get("args", {})
-                loss_fn_dict["tissue_types"][loss_name] = {
-                    "loss_fn": retrieve_loss_fn(loss_sett["loss_fn"], **parameters),
-                    "weight": loss_sett["weight"],
-                }
-        else:
-            loss_fn_dict["tissue_types"] = {
-                "ce": {"loss_fn": nn.CrossEntropyLoss(), "weight": 1},
             }
         if "regression_loss" in loss_fn_settings.keys():
             loss_fn_dict["regression_map"] = {}
@@ -501,7 +480,7 @@ class ExperimentCellVitNCT(BaseExperiment):
             self.run_conf["data"]["regression_loss"] = True
 
         full_dataset = select_dataset(
-            dataset_name="pannuke",
+            dataset_name="conic",
             split="train",
             dataset_config=self.run_conf["data"],
             transforms=train_transforms,
@@ -521,7 +500,7 @@ class ExperimentCellVitNCT(BaseExperiment):
         else:
             train_dataset = full_dataset
             val_dataset = select_dataset(
-                dataset_name="pannuke",
+                dataset_name="conic",
                 split="validation",
                 dataset_config=self.run_conf["data"],
                 transforms=val_transforms,
@@ -566,7 +545,7 @@ class ExperimentCellVitNCT(BaseExperiment):
                 model_class = CellViT
             model = model_class(
                 num_nuclei_classes=self.run_conf["data"]["num_nuclei_classes"],
-                num_tissue_classes=self.run_conf["data"]["num_tissue_classes"],
+                num_tissue_classes=1,
                 embed_dim=self.run_conf["model"]["embed_dim"],
                 input_channels=self.run_conf["model"].get("input_channels", 3),
                 depth=self.run_conf["model"]["depth"],
@@ -594,7 +573,7 @@ class ExperimentCellVitNCT(BaseExperiment):
             model = model_class(
                 model256_path=pretrained_encoder,
                 num_nuclei_classes=self.run_conf["data"]["num_nuclei_classes"],
-                num_tissue_classes=self.run_conf["data"]["num_tissue_classes"],
+                num_tissue_classes=1,
                 drop_rate=self.run_conf["training"].get("drop_rate", 0),
                 attn_drop_rate=self.run_conf["training"].get("attn_drop_rate", 0),
                 drop_path_rate=self.run_conf["training"].get("drop_path_rate", 0),
@@ -617,7 +596,7 @@ class ExperimentCellVitNCT(BaseExperiment):
             model = model_class(
                 model_path=pretrained_encoder,
                 num_nuclei_classes=self.run_conf["data"]["num_nuclei_classes"],
-                num_tissue_classes=self.run_conf["data"]["num_tissue_classes"],
+                num_tissue_classes=1,
                 vit_structure=backbone_type,
                 drop_rate=self.run_conf["training"].get("drop_rate", 0),
                 regression_loss=regression_loss,
@@ -785,7 +764,7 @@ class ExperimentCellVitNCT(BaseExperiment):
         Args:
             train_dataset (CellDataset): Dataset for training
             strategy (str, optional): Sampling strategy. Defaults to "random" (random sampling).
-                Implemented are "random", "cell", "tissue", "cell+tissue".
+                Implemented are "random" and "cell"
             gamma (float, optional): Gamma scaling factor, between 0 and 1.
                 1 means total balancing, 0 means original weights. Defaults to 1.
 
@@ -810,13 +789,9 @@ class ExperimentCellVitNCT(BaseExperiment):
             ds.load_cell_count()
             if strategy.lower() == "cell":
                 weights = ds.get_sampling_weights_cell(gamma)
-            elif strategy.lower() == "tissue":
-                weights = ds.get_sampling_weights_tissue(gamma)
-            elif strategy.lower() == "cell+tissue":
-                weights = ds.get_sampling_weights_cell_tissue(gamma)
             else:
                 raise NotImplementedError(
-                    "Unknown sampling strategy - Implemented are cell, tissue and cell+tissue"
+                    "Unknown sampling strategy - Implemented is cell"
                 )
 
             if isinstance(train_dataset, Subset):
@@ -836,12 +811,3 @@ class ExperimentCellVitNCT(BaseExperiment):
             self.logger.info(f"Unique-Weights: {torch.unique(weights)}")
 
         return sampler
-
-    def get_trainer(self) -> BaseTrainer:
-        """Return Trainer matching to this network
-
-        Returns:
-            BaseTrainer: Trainer
-        """
-        return CellViTTrainer
-

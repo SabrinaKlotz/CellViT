@@ -16,20 +16,20 @@ sys.path.insert(0, parentdir)
 import wandb
 
 from base_ml.base_cli import ExperimentBaseParser
+
 from cell_segmentation.experiments.experiment_cellvit_pannuke import (
     ExperimentCellVitPanNuke,
 )
 from cell_segmentation.experiments.experiment_cellvit_conic import (
     ExperimentCellViTCoNic,
 )
+# Added NCT experiment class
+from cell_segmentation.experiments.experiment_cellvit_nct import (
+    ExperimentCellViTNCT,
+)
 
 from cell_segmentation.inference.inference_cellvit_experiment_pannuke import (
     InferenceCellViT,
-)
-
-# Continue in your main script
-from cell_segmentation.experiments.experiment_cellvit_nct import (
-    ExperimentCellViTNCT,
 )
 
 if __name__ == "__main__":

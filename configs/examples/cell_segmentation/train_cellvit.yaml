@@ -31,7 +31,7 @@ data:
   val_folds:                # List of fold Numbers to use for validation [list[int]]
   test_folds:               # List of fold Numbers to use for final testing [list[int]]
   num_nuclei_classes:   6    # Number of different nuclei classes (including background!, e.g. 5 nuclei classes + background = 6) [int]
-  input_shape:         256     # Input shape of data. [int] [Optional, defaults to 256]
+  input_shape:         224     # Input shape of data. [int] [Optional, defaults to 256]
 
 # model options
 model:
