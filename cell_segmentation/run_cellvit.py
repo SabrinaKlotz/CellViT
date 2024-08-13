@@ -27,8 +27,12 @@ from cell_segmentation.inference.inference_cellvit_experiment_pannuke import (
     InferenceCellViT,
 )
 
+# Continue in your main script
+from cell_segmentation.experiments.experiment_cellvit_nct import (
+    ExperimentCellViTNCT,
+)
+
 if __name__ == "__main__":
-    # Parse arguments
     configuration_parser = ExperimentBaseParser()
     configuration = configuration_parser.parse_arguments()
 
@@ -36,6 +40,11 @@ if __name__ == "__main__":
         experiment_class = ExperimentCellVitPanNuke
     elif configuration["data"]["dataset"].lower() == "conic":
         experiment_class = ExperimentCellViTCoNic
+    elif configuration["data"]["dataset"].lower() == "nct":
+        experiment_class = ExperimentCellViTNCT  # Added NCT experiment class
+    else:
+        raise ValueError(f"Dataset {configuration['data']['dataset']} is not supported.")
+
     # Setup experiment
     if "checkpoint" in configuration:
         # continue checkpoint

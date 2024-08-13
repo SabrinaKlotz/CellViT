@@ -1,0 +1,18 @@
+tissue_types:
+  "ADI": 0
+  "BACK": 1
+  "DEB": 2
+  "LYM": 3
+  "MUC": 4
+  "MUS": 5
+  "NORM": 6
+  "STR": 7
+  "TUM": 8
+
+nuclei_types:
+  "Background": 0
+  "Neoplastic": 1
+  "Inflammatory": 2
+  "Connective": 3
+  "Dead": 4
+  "Epithelial": 5

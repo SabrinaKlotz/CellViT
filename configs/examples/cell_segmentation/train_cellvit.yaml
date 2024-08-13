@@ -12,7 +12,7 @@ logging:
     - "..."
   wandb_dir:                # Direcotry to store the wandb file. CAREFUL: Directory must exists [str]
   log_dir:                  # Direcotry to store all logging related files and outputs [str]
-  level:                    # Level of logging must be either ["critical", "error", "warning", "info", "debug"] [str]
+  level:  info                  # Level of logging must be either ["critical", "error", "warning", "info", "debug"] [str]
   log_images:               # If images should be logged to WandB for this run. [bool] [Optional, defaults to False]
   group:                    # WandB group tag [str] [Optional, defaults to None]
 
@@ -24,20 +24,20 @@ gpu:                        # Number of GPU to run experiment on [int]
 
 # setting paths and dataset
 data:
-  dataset:                  # Name of dataset, currently supported: PanNuke, Conic. Select your dataset and the script will autoamtically select the corresponding experiment [str]
-  dataset_path:             # Path to dataset, compare ./docs/readmes/pannuke.md for further details [str]
+  dataset:  PanNuke                # Name of dataset, currently supported: PanNuke, Conic. Select your dataset and the script will autoamtically select the corresponding experiment [str]
+  dataset_path:     /mnt/volume/mathias/datasets        # Path to dataset, compare ./docs/readmes/pannuke.md for further details [str]
   train_folds: [...]        # List of fold Numbers to use for training [list[int]]
-  val_split:                # Percentage of training set that should be used for validation. Either val_split or val_fold must be provided, not both. [float]
+  val_split:     20           # Percentage of training set that should be used for validation. Either val_split or val_fold must be provided, not both. [float]
   val_folds:                # List of fold Numbers to use for validation [list[int]]
   test_folds:               # List of fold Numbers to use for final testing [list[int]]
-  num_nuclei_classes:       # Number of different nuclei classes (including background!, e.g. 5 nuclei classes + background = 6) [int]
-  input_shape:              # Input shape of data. [int] [Optional, defaults to 256]
+  num_nuclei_classes:   6    # Number of different nuclei classes (including background!, e.g. 5 nuclei classes + background = 6) [int]
+  input_shape:         256     # Input shape of data. [int] [Optional, defaults to 256]
 
 # model options
 model:
-  backbone:                 # Backbone Type: Options are: default, ViT256, SAM-B, SAM-L, SAM-H
+  backbone: ViT256                # Backbone Type: Options are: default, ViT256, SAM-B, SAM-L, SAM-H
   pretrained_encoder:       # Set path to a pretrained encoder [str]
-  pretrained:               # Path to a pretrained model (.pt file) [str, default None]
+  pretrained:  /mnt/volume/mathias/pretrained_models/             # Path to a pretrained model (.pt file) [str, default None]
   embed_dim:                # Embedding dimension for ViT - typical values are 384 (ViT-S), 768 (ViT-B), 1024 (ViT-L), 1280 (ViT-H) [int]
   input_channels:           # Number of input channels, usually 3 for RGB [int, default 3]
   depth:                    # Number of Transformer Blocks to use - typical values are 12 (ViT-S), 12 (ViT-B), 24 (ViT-L), 32 (ViT-H) [int]
@@ -74,15 +74,15 @@ training:
   drop_rate:                # Dropout rate [float] [Optional, defaults to 0]
   attn_drop_rate:           # Dropout rate in attention layer [float] [Optional, defaults to 0]
   drop_path_rate:           # Dropout rate in paths [float] [Optional, defaults to 0]
-  optimizer:                # Pytorch Optimizer Name. All pytorch optimizers (v1.13) are supported. [str]
+  optimizer: Adam               # Pytorch Optimizer Name. All pytorch optimizers (v1.13) are supported. [str]
   optimizer_hyperparameter: # Hyperparamaters for the optimizers, must be named exactly as in the pytorch documation given for the selected optimizer
     lr: 0.001               # e.g. learning-rate for Adam
     betas: [0.85, 0.9]      # e.g. betas for Adam
   early_stopping_patience:  # Number of epochs before applying early stopping after metric has not been improved. Metric used is total loss. [int]
   scheduler:                # Learning rate scheduler. If no scheduler is selected here, then the learning rate stays constant
-    scheduler_type:         # Name of learning rate scheduler. Currently implemented: "constant", "exponential", "cosine". [str]
+    scheduler_type: exponential        # Name of learning rate scheduler. Currently implemented: "constant", "exponential", "cosine". [str]
     # hyperparameters       # gamma [default 0.95] for "exponential", "eta_min" [default 1e-5] for CosineAnnealingLR
-  sampling_strategy:        # Sampling strategy. Implemented are "random", "cell", "tissue" and "cell+tissue" [str] [Optional, defaults to "random"]
+  sampling_strategy: random       # Sampling strategy. Implemented are "random", "cell", "tissue" and "cell+tissue" [str] [Optional, defaults to "random"]
   sampling_gamma:           # Gamma for balancing sampling. Must be between 0 (equal weights) and 1 (100% oversampling) [float] [Optional, defaults to 1]
   mixed_precision:          # Mixed precision Flag. [bool] [Optional, default False]
   eval_every:               # Number of training epochs between every validation. If 1, alternating training and validation as commonly used. [int] [Optional, default 1]

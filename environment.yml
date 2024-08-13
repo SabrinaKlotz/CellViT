@@ -5,7 +5,6 @@ channels:
 dependencies:
   - python=3.9.7
   - libtiff=4.5.0=h6adf6a1_2
-  - openslide=3.4.1=h7773abc_6
   - pip=23.0=pyhd8ed1ab_0
   - python-javabridge
   - gcc
@@ -30,7 +29,6 @@ dependencies:
     - matplotlib==3.7.1
     - numpy>1.22,<1.24
     - opencv_python_headless==4.5.4.58
-    - openslide_python==1.2.0
     - pandarallel==1.6.5
     - pandas==1.5.3
     - Pillow==9.5.0
