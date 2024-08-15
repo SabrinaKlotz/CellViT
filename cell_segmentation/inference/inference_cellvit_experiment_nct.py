@@ -16,6 +16,9 @@ from collections import deque
 
 from models.segmentation.cell_segmentation.cellvit import CellViT256
 
+from utils.logger import Logger
+from utils.tools import unflatten_dict
+
 # color setup
 COLOR_DICT = {
     1: [255, 0, 0],
