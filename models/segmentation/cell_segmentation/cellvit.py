@@ -379,6 +379,7 @@ class CellViT(nn.Module):
             instance_pred = cell_post_processor.post_process_cell_segmentation(pred_map)
             instance_preds.append(instance_pred[0])
             type_preds.append(instance_pred[1])
+            print(type_preds)
 
         return torch.Tensor(np.stack(instance_preds)), type_preds
 

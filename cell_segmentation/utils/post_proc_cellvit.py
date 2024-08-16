@@ -80,12 +80,15 @@ class DetectionCellPostProcessor:
                     For each instance, the dictionary contains the keys: bbox (bounding box), centroid (centroid coordinates),
                     contour, type_prob (probability), type (nuclei type)
         """
+        print(pred_map)
         if self.nr_types is not None:
             pred_type = pred_map[..., :1]
             pred_inst = pred_map[..., 1:]
             pred_type = pred_type.astype(np.int32)
         else:
             pred_inst = pred_map
+
+        print(pred_inst)
 
         pred_inst = np.squeeze(pred_inst)
         pred_inst = self.__proc_np_hv(
@@ -172,8 +175,11 @@ class DetectionCellPostProcessor:
         pred = np.array(pred, dtype=np.float32)
 
         blb_raw = pred[..., 0]
+        print(blb_raw)
         h_dir_raw = pred[..., 1]
+        print(h_dir_raw)
         v_dir_raw = pred[..., 2]
+        print(v_dir_raw)
 
         # processing
         blb = np.array(blb_raw >= 0.5, dtype=np.int32)

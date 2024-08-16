@@ -14,6 +14,12 @@ from rtree import index
 from rtree.index import STRtree
 from collections import deque
 
+currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+parentdir = os.path.dirname(currentdir)
+sys.path.insert(0, parentdir)
+parentdir = os.path.dirname(parentdir)
+sys.path.insert(0, parentdir)
+
 from models.segmentation.cell_segmentation.cellvit import CellViT256
 
 from utils.logger import Logger
