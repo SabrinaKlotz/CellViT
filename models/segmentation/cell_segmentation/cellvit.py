@@ -352,6 +352,7 @@ class CellViT(nn.Module):
         predictions_["nuclei_type_map"] = predictions_["nuclei_type_map"].permute(
             0, 2, 3, 1
         )
+
         predictions_["nuclei_binary_map"] = predictions_["nuclei_binary_map"].permute(
             0, 2, 3, 1
         )
@@ -379,7 +380,6 @@ class CellViT(nn.Module):
             instance_pred = cell_post_processor.post_process_cell_segmentation(pred_map)
             instance_preds.append(instance_pred[0])
             type_preds.append(instance_pred[1])
-            print(type_preds)
 
         return torch.Tensor(np.stack(instance_preds)), type_preds
 

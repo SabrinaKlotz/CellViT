@@ -7,8 +7,8 @@ import numpy as np
 import os
 import sys
 import inspect
+from torchvision.transforms.functional import resize, pil_to_tensor, normalize, InterpolationMode
 
-# Set up the module paths
 currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
 parentdir = os.path.dirname(currentdir)
 sys.path.insert(0, parentdir)
@@ -16,23 +16,6 @@ parentdir = os.path.dirname(parentdir)
 sys.path.insert(0, parentdir)
 
 from models.segmentation.cell_segmentation.cellvit import CellViT256
-
-# Color and type mappings
-COLOR_DICT = {
-    1: [255, 0, 0],
-    2: [34, 221, 77],
-    3: [35, 92, 236],
-    4: [254, 255, 0],
-    5: [255, 159, 68],
-}
-
-TYPE_NUCLEI_DICT = {
-    1: "Neoplastic",
-    2: "Inflammatory",
-    3: "Connective",
-    4: "Dead",
-    5: "Epithelial",
-}
 
 # Global variables to store the model and transforms
 cellvit = None
@@ -66,9 +49,20 @@ def load_tiff_image(file_path):
     return image
 
 def process_image(image):
-    img = torch.tensor(image.transpose(2, 0, 1)).unsqueeze(0).float()
-    img = torch.nn.functional.pad(img, (0, 1024-img.shape[3], 0, 1024-img.shape[2]), value=0)
-    img_norm = (img / 256 - torch.tensor(cellvit_mean).view(3, 1, 1) / torch.tensor(cellvit_std).view(3, 1, 1))
+    print("Processing image...")
+    print("Original image shape:", image.size)
+
+    image = Image.fromarray(image)
+    
+    resized_image = resize(image, (1024, 1024), interpolation=InterpolationMode.BILINEAR)
+    
+    img_tensor = pil_to_tensor(resized_image).float().unsqueeze(0)
+    
+    img_norm = normalize(img_tensor, mean=cellvit_mean, std=cellvit_std)
+    
+    print("Processed image:")
+    print("Image shape after processing:", img_norm.shape)
+    
     return img_norm
 
 def model_inference(img_norm):
@@ -108,7 +102,7 @@ instance_types = model_inference(img_norm)
 print(instance_types)
 
 # Convert to GeoJSON
-#geojson_data = convert_to_geojson(instance_types)
+geojson_data = convert_to_geojson(instance_types)
 
 # Save GeoJSON
-#save_geojson(geojson_data, "/mnt/volume/sabrina/inference_cellvit_nct_test.geojson")
+save_geojson(geojson_data, "/mnt/volume/sabrina/inference_cellvit_nct_test.geojson")

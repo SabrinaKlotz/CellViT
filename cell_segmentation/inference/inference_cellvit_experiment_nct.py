@@ -1,18 +1,37 @@
-import torch
-import torch.nn.functional as F
-from PIL import Image
-import geojson
-import torchvision.transforms as T
-import numpy as np
-import pandas as pd
+import inspect
+import os
+import sys
+
+currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+parentdir = os.path.dirname(currentdir)
+sys.path.insert(0, parentdir)
+parentdir = os.path.dirname(parentdir)
+sys.path.insert(0, parentdir)
+
+import argparse
 import logging
 import uuid
-import geopandas as gpd
-import shapely
-from shapely.geometry import Polygon, MultiPolygon 
-from rtree import index
-from rtree.index import STRtree
+import warnings
 from collections import deque
+from pathlib import Path
+from typing import List, Tuple, Union
+import geopandas as gpd
+
+import numpy as np
+import pandas as pd
+import torch
+import torch.nn.functional as F
+
+from PIL import Image
+from shapely import strtree
+from shapely.errors import ShapelyDeprecationWarning
+from shapely.geometry import Polygon, MultiPolygon
+
+# from skimage.color import rgba2rgb
+from torch.utils.data import DataLoader
+from torchvision import transforms as T
+from torchvision.transforms.functional import resize, pil_to_tensor, normalize, InterpolationMode
+import inspect
 
 currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
 parentdir = os.path.dirname(currentdir)
@@ -22,8 +41,11 @@ sys.path.insert(0, parentdir)
 
 from models.segmentation.cell_segmentation.cellvit import CellViT256
 
-from utils.logger import Logger
-from utils.tools import unflatten_dict
+# Global variables to store the model and transforms
+cellvit = None
+cellvit_transforms = None
+cellvit_mean = None
+cellvit_std = None
 
 # color setup
 COLOR_DICT = {
@@ -42,8 +64,9 @@ TYPE_NUCLEI_DICT = {
     5: "Epithelial",
 }
 
-def initialize_cellvit(self, model_name="CellViT-256-x40.pth"):
-    checkpoint = torch.load(self.model_dir + "CellViT/" + model_name)
+def initialize_cellvit(model_name="CellViT-256-x20.pth"):
+    global cellvit, cellvit_transforms, cellvit_mean, cellvit_std
+    checkpoint = torch.load(os.path.join("/mnt/volume/mathias/pretrained_models/", model_name))  # Update with correct path
     config = checkpoint['config']
     model = CellViT256(model256_path=None,
                        num_nuclei_classes=config["data.num_nuclei_classes"],
@@ -53,32 +76,42 @@ def initialize_cellvit(self, model_name="CellViT-256-x40.pth"):
     
     mean = (0.5, 0.5, 0.5)
     std = (0.5, 0.5, 0.5)
-    inference_transforms = T.Compose(
-        [T.ToTensor(), T.Normalize(mean=mean, std=std)]
-    )
-    self.cellvit = model
-    self.cellvit_transforms = inference_transforms
-    self.cellvit_mean = mean
-    self.cellvit_std = std
-    self.cellvit.eval()
+    inference_transforms = T.Compose([T.ToTensor(), T.Normalize(mean=mean, std=std)])
+    
+    cellvit = model
+    cellvit_transforms = inference_transforms
+    cellvit_mean = mean
+    cellvit_std = std
+    cellvit.eval()
 
 def load_tiff_image(file_path):
     image = Image.open(file_path)
     image = np.array(image)
     return image
 
-def process_image(self, image):
-    img = torch.tensor(image.transpose(2, 0, 1)).unsqueeze(0).float()
-    img = torch.nn.functional.pad(img, (0, 1024-img.shape[3], 0, 1024-img.shape[2]), value=0)
-    img_norm = (img/256 - torch.tensor(self.cellvit_mean).view(3, 1, 1)/torch.tensor(self.cellvit_std).view(3, 1, 1))
+def process_image(image):
+    print("Processing image...")
+    print("Original image shape:", image.size)
+
+    image = Image.fromarray(image)
+    
+    resized_image = resize(image, (1024, 1024), interpolation=InterpolationMode.BILINEAR)
+    
+    img_tensor = pil_to_tensor(resized_image).float().unsqueeze(0)
+    
+    img_norm = normalize(img_tensor, mean=cellvit_mean, std=cellvit_std)
+    
+    print("Processed image:")
+    print("Image shape after processing:", img_norm.shape)
+    
     return img_norm
 
-def model_inference(self, img_norm):
+def model_inference(img_norm):
     with torch.no_grad():
-        predictions = self.cellvit(img_norm)
+        predictions = cellvit(img_norm)
         predictions["nuclei_binary_map"] = F.softmax(predictions["nuclei_binary_map"], dim=1)  # shape: (batch_size, 2, H, W)
         predictions["nuclei_type_map"] = F.softmax(predictions["nuclei_type_map"], dim=1)  # shape: (batch_size, num_nuclei_classes, H, W)
-        _, instance_types = self.cellvit.calculate_instance_map(predictions)
+        _, instance_types = cellvit.calculate_instance_map(predictions)
     return instance_types
 
 def convert_geojson(cell_list: list[dict], polygons: bool = False) -> list[dict]:
@@ -430,27 +463,25 @@ def save_geojson(geojson_data, output_file):
     with open(output_file, 'w') as f:
         geojson.dump(geojson_data, f)
 
-# Example usage:
-# Initialize the model (this would be done once)
+
+# Usage 
 initialize_cellvit()
 
-# Load the TIFF image
-image = load_tiff_image("your_image_path.tiff")
+# Set up global logger
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Preprocess the image
+image = load_tiff_image("/mnt/volume/datasets/NCT-CRC-HE-100K/ADI/ADI-AAAMHQMK.tif")
+
 img_norm = process_image(image)
 
-# Model Inference
 instance_types = model_inference(img_norm)
+print(instance_types)
 
-# Create an instance of CellProcessor
 processor = CellPostProcessor(instance_types, logger)
 
-# Post-process cells
 post_processed_cells = processor.post_process_cells()
 
-# Convert to GeoJSON (either polygons or detection points)
 geojson_data = processor.convert_to_geojson(polygons=True)
 
-# Save or use geojson_data as needed
-save_geojson(geojson_data, "output_file.geojson")
+save_geojson(geojson_data, "/mnt/volume/sabrina/inference_cellvit_experiment_nct.geojson")
