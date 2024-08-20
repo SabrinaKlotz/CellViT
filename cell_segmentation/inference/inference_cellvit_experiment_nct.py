@@ -8,480 +8,261 @@ sys.path.insert(0, parentdir)
 parentdir = os.path.dirname(parentdir)
 sys.path.insert(0, parentdir)
 
-import argparse
-import logging
-import uuid
-import warnings
-from collections import deque
 from pathlib import Path
 from typing import List, Tuple, Union
-import geopandas as gpd
 
 import numpy as np
-import pandas as pd
+from tqdm import tqdm
 import torch
 import torch.nn.functional as F
+from utils.logger import Logger
 
-from PIL import Image
-from shapely import strtree
-from shapely.errors import ShapelyDeprecationWarning
-from shapely.geometry import Polygon, MultiPolygon
-
-# from skimage.color import rgba2rgb
-from torch.utils.data import DataLoader
 from torchvision import transforms as T
-from torchvision.transforms.functional import resize, pil_to_tensor, normalize, InterpolationMode
-import inspect
+from torch.utils.data import DataLoader, Dataset
+from PIL import Image
+import json
 
-currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
-parentdir = os.path.dirname(currentdir)
-sys.path.insert(0, parentdir)
-parentdir = os.path.dirname(parentdir)
-sys.path.insert(0, parentdir)
+from models.segmentation.cell_segmentation.cellvit import (
+    CellViT256,
+    CellViTSAM,
+)
 
-from models.segmentation.cell_segmentation.cellvit import CellViT256
-
-# Global variables to store the model and transforms
-cellvit = None
-cellvit_transforms = None
-cellvit_mean = None
-cellvit_std = None
-
-# color setup
-COLOR_DICT = {
-    1: [255, 0, 0],
-    2: [34, 221, 77],
-    3: [35, 92, 236],
-    4: [254, 255, 0],
-    5: [255, 159, 68],
-}
-
-TYPE_NUCLEI_DICT = {
-    1: "Neoplastic",
-    2: "Inflammatory",
-    3: "Connective",
-    4: "Dead",
-    5: "Epithelial",
-}
-
-def initialize_cellvit(model_name="CellViT-256-x20.pth"):
-    global cellvit, cellvit_transforms, cellvit_mean, cellvit_std
-    checkpoint = torch.load(os.path.join("/mnt/volume/mathias/pretrained_models/", model_name))  # Update with correct path
-    config = checkpoint['config']
-    model = CellViT256(model256_path=None,
-                       num_nuclei_classes=config["data.num_nuclei_classes"],
-                       num_tissue_classes=config["data.num_tissue_classes"],
-                       regression_loss=False)
-    model.load_state_dict(checkpoint['model_state_dict'])
+class InferenceCellViT:    
     
-    mean = (0.5, 0.5, 0.5)
-    std = (0.5, 0.5, 0.5)
-    inference_transforms = T.Compose([T.ToTensor(), T.Normalize(mean=mean, std=std)])
-    
-    cellvit = model
-    cellvit_transforms = inference_transforms
-    cellvit_mean = mean
-    cellvit_std = std
-    cellvit.eval()
-
-def load_tiff_image(file_path):
-    image = Image.open(file_path)
-    image = np.array(image)
-    return image
-
-def process_image(image):
-    print("Processing image...")
-    print("Original image shape:", image.size)
-
-    image = Image.fromarray(image)
-    
-    resized_image = resize(image, (1024, 1024), interpolation=InterpolationMode.BILINEAR)
-    
-    img_tensor = pil_to_tensor(resized_image).float().unsqueeze(0)
-    
-    img_norm = normalize(img_tensor, mean=cellvit_mean, std=cellvit_std)
-    
-    print("Processed image:")
-    print("Image shape after processing:", img_norm.shape)
-    
-    return img_norm
-
-def model_inference(img_norm):
-    with torch.no_grad():
-        predictions = cellvit(img_norm)
-        predictions["nuclei_binary_map"] = F.softmax(predictions["nuclei_binary_map"], dim=1)  # shape: (batch_size, 2, H, W)
-        predictions["nuclei_type_map"] = F.softmax(predictions["nuclei_type_map"], dim=1)  # shape: (batch_size, num_nuclei_classes, H, W)
-        _, instance_types = cellvit.calculate_instance_map(predictions)
-    return instance_types
-
-def convert_geojson(cell_list: list[dict], polygons: bool = False) -> list[dict]:
-    """Convert a list of cells to a geojson object
-
-    Either a segmentation object (polygon) or detection points are converted
-
-    Args:
-        cell_list (list[dict]): Cell list with dict entry for each cell.
-            Required keys for detection:
-                * type
-                * centroid
-            Required keys for segmentation:
-                * type
-                * contour
-        polygons (bool, optional): If polygon segmentations (True) or detection points (False). Defaults to False.
-
-    Returns:
-        list[dict]: Geojson like list
-    """
-    if polygons:
-        cell_segmentation_df = pd.DataFrame(cell_list)
-        detected_types = sorted(cell_segmentation_df.type.unique())
-        geojson_placeholder = []
-        for cell_type in detected_types:
-            cells = cell_segmentation_df[cell_segmentation_df["type"] == cell_type]
-            contours = cells["contour"].to_list()
-            final_c = []
-            for c in contours:
-                c.append(c[0])
-                final_c.append([c])
-
-            cell_geojson_object = get_template_segmentation()
-            cell_geojson_object["id"] = str(uuid.uuid4())
-            cell_geojson_object["geometry"]["coordinates"] = final_c
-            cell_geojson_object["properties"]["classification"]["name"] = TYPE_NUCLEI_DICT[cell_type]
-            cell_geojson_object["properties"]["classification"]["color"] = COLOR_DICT[cell_type]
-            geojson_placeholder.append(cell_geojson_object)
-    else:
-        cell_detection_df = pd.DataFrame(cell_list)
-        detected_types = sorted(cell_detection_df.type.unique())
-        geojson_placeholder = []
-        for cell_type in detected_types:
-            cells = cell_detection_df[cell_detection_df["type"] == cell_type]
-            centroids = cells["centroid"].to_list()
-            cell_geojson_object = get_template_point()
-            cell_geojson_object["id"] = str(uuid.uuid4())
-            cell_geojson_object["geometry"]["coordinates"] = centroids
-            cell_geojson_object["properties"]["classification"]["name"] = TYPE_NUCLEI_DICT[cell_type]
-            cell_geojson_object["properties"]["classification"]["color"] = COLOR_DICT[cell_type]
-            geojson_placeholder.append(cell_geojson_object)
-    return geojson_placeholder
-
-def get_template_segmentation():
-    """Returns a template for a segmentation geojson object"""
-    return {
-        "type": "Feature",
-        "geometry": {
-            "type": "Polygon",
-            "coordinates": []
-        },
-        "properties": {
-            "classification": {
-                "name": "",
-                "color": ""
-            }
-        },
-        "id": ""
-    }
-
-def get_template_point():
-    """Returns a template for a point geojson object"""
-    return {
-        "type": "Feature",
-        "geometry": {
-            "type": "MultiPoint",
-            "coordinates": []
-        },
-        "properties": {
-            "classification": {
-                "name": "",
-                "color": ""
-            }
-        },
-        "id": ""
-    }
-
-def convert_coordinates(row: pd.Series) -> pd.Series:
-    """Convert a row from x,y type to one string representation of the patch position for fast querying
-    Repr: x_y
-
-    Args:
-        row (pd.Series): Row to be processed
-
-    Returns:
-        pd.Series: Processed Row
-    """
-    x, y = row["patch_coordinates"]
-    row["patch_row"] = x
-    row["patch_col"] = y
-    row["patch_coordinates"] = f"{x}_{y}"
-    return row
-
-def get_cell_position(bbox: np.ndarray, patch_size: int = 1024) -> list[int]:
-    """Get cell position as a list
-
-    Entry is 1, if cell touches the border: [top, right, down, left]
-
-    Args:
-        bbox (np.ndarray): Bounding-Box of cell
-        patch_size (int, optional): Patch-size. Defaults to 1024.
-
-    Returns:
-        list[int]: List with 4 integers for each position
-    """
-    top, left, down, right = False, False, False, False
-    if bbox[0, 0] == 0:
-        top = True
-    if bbox[0, 1] == 0:
-        left = True
-    if bbox[1, 0] == patch_size:
-        down = True
-    if bbox[1, 1] == patch_size:
-        right = True
-    position = [top, right, down, left]
-    position = [int(pos) for pos in position]
-
-    return position
-
-def get_cell_position_margin(bbox: np.ndarray, patch_size: int = 1024, margin: int = 64) -> int:
-    """Get the status of the cell, describing the cell position
-
-    A cell is either in the mid (0) or at one of the borders (1-8)
-
-    # Numbers are assigned clockwise, starting from top left
-    # i.e., top left = 1, top = 2, top right = 3, right = 4, bottom right = 5 bottom = 6, bottom left = 7, left = 8
-    # Mid status is denoted by 0
-
-    Args:
-        bbox (np.ndarray): Bounding Box of cell
-        patch_size (int, optional): Patch-Size. Defaults to 1024.
-        margin (int, optional): Margin-Size. Defaults to 64.
-
-    Returns:
-        int: Cell Status
-    """
-    cell_status = None
-    if np.max(bbox) > patch_size - margin or np.min(bbox) < margin:
-        if bbox[0, 0] < margin:
-            if bbox[0, 1] < margin:
-                cell_status = 1
-            elif bbox[1, 1] > patch_size - margin:
-                cell_status = 3
-            else:
-                cell_status = 2
-        elif bbox[1, 1] > patch_size - margin:
-            if bbox[1, 0] > patch_size - margin:
-                cell_status = 5
-            else:
-                cell_status = 4
-        elif bbox[1, 0] > patch_size - margin:
-            if bbox[0, 1] < margin:
-                cell_status = 7
-            else:
-                cell_status = 6
-        elif bbox[0, 1] < margin:
-            cell_status = 8
-    else:
-        cell_status = 0
-
-    return cell_status
-
-def get_edge_patch(position, row, col):
-    if position == [1, 0, 0, 0]:
-        return [[row - 1, col]]
-    if position == [1, 1, 0, 0]:
-        return [[row - 1, col], [row - 1, col + 1], [row, col + 1]]
-    if position == [0, 1, 0, 0]:
-        return [[row, col + 1]]
-    if position == [0, 1, 1, 0]:
-        return [[row, col + 1], [row + 1, col + 1], [row + 1, col]]
-    if position == [0, 0, 1, 0]:
-        return [[row + 1, col]]
-    if position == [0, 0, 1, 1]:
-        return [[row + 1, col], [row + 1, col - 1], [row, col - 1]]
-    if position == [0, 0, 0, 1]:
-        return [[row, col - 1]]
-    if position == [1, 0, 0, 1]:
-        return [[row, col - 1], [row - 1, col - 1], [row - 1, col]]
-
-class CellPostProcessor:
-    def __init__(self, cell_list: list[dict], logger: logging.Logger) -> None:
-        """Post-Processing a list of cells from one WSI
-
-        Args:
-            cell_list (list[dict]): List with cell-dictionaries. Required keys:
-                * bbox
-                * centroid
-                * contour
-                * type_prob
-                * type
-                * patch_coordinates
-                * cell_status
-                * offset_global
-            logger (logging.Logger): Logger
+    def __init__(self, model_path: Union[Path, str], gpu: int):        
+        self.model_path = Path(model_path)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu") #f"cuda:{gpu}"
+        self.logger: Logger = None
+        self.model = None
+        self.config = None
+        self.__instantiate_logger()
+        self.__load_model()
+        
+        
+    def __instantiate_logger(self) -> None:
         """
-        self.logger = logger
-        self.logger.info("Initializing Cell-Postprocessor")
-        self.cell_df = pd.DataFrame(cell_list)
-        self.cell_df = self.cell_df.apply(convert_coordinates, axis=1)
-
-        self.mid_cells = self.cell_df[
-            self.cell_df["cell_status"] == 0
-        ]
-        self.cell_df_margin = self.cell_df[
-            self.cell_df["cell_status"] != 0
-        ]
-
-    def post_process_cells(self) -> pd.DataFrame:
-        """Main Post-Processing coordinator, entry point
-
-        Returns:
-            pd.DataFrame: DataFrame with post-processed and cleaned cells
+        init logger
         """
-        self.logger.info("Finding edge-cells for merging")
-        cleaned_edge_cells = self._clean_edge_cells()
-        self.logger.info("Removal of cells detected multiple times")
-        cleaned_edge_cells = self._remove_overlap(cleaned_edge_cells)
-
-        # merge with mid cells
-        postprocessed_cells = pd.concat(
-            [self.mid_cells, cleaned_edge_cells]
-        ).sort_index()
-        return postprocessed_cells
-
-    def _clean_edge_cells(self) -> pd.DataFrame:
-        """Clean margin and edge cells by removing overlaps.
-
-        Returns:
-            pd.DataFrame: Cleaned DataFrame
-        """
-        margin_cells = self.cell_df_margin[
-            self.cell_df_margin["edge_position"] == 0
-        ]
-        edge_cells = self.cell_df_margin[
-            self.cell_df_margin["edge_position"] == 1
-        ]
-        existing_patches = list(
-            set(self.cell_df_margin["patch_coordinates"].to_list())
+        logger = Logger(
+            level="INFO",
         )
+        self.logger = logger.create_logger()                        
 
-        edge_cells_unique = pd.DataFrame(
-            columns=self.cell_df_margin.columns
+
+    def __get_model(self, model_type) -> Union[CellViT256, CellViTSAM]:
+        """
+        get model architecture to load pretrained weights into
+        """
+        implemented_models = ["CellViT256", "CellViTSAM"]
+        
+        if model_type not in implemented_models:
+            raise NotImplementedError(
+                f"Unknown model type. Please select one of {implemented_models}"
+            )
+
+        if model_type in ["CellViT256"]:
+            model = CellViT256(model256_path=None,
+            num_nuclei_classes=self.config["data.num_nuclei_classes"],
+            num_tissue_classes=self.config["data.num_tissue_classes"],
+            regression_loss=False)
+        elif model_type in ["CellViTSAM"]:
+            model = CellViTSAM(
+            model_path=None,
+            num_nuclei_classes=self.config["data.num_nuclei_classes"],
+            num_tissue_classes=self.config["data.num_tissue_classes"],
+            vit_structure=self.config["model.backbone"],
+            regression_loss=False)
+            
+        return model
+    
+    
+    def __load_model(self):
+        """
+        load pretrained model based on self.model_path
+        """
+        self.logger.info(f"Loading model: {self.model_path}")
+
+        checkpoint = torch.load(self.model_path)
+        self.config = checkpoint['config']
+
+        # unpack checkpoint        
+        self.model = self.__get_model(model_type=checkpoint["arch"])
+        self.logger.info(
+            self.model.load_state_dict(checkpoint["model_state_dict"])
         )
-
-        for idx, cell_info in edge_cells.iterrows():
-            edge_information = dict(cell_info["edge_information"])
-            edge_patch = edge_information["edge_patches"][0]
-            edge_patch = f"{edge_patch[0]}_{edge_patch[1]}"
-            if edge_patch not in existing_patches:
-                edge_cells_unique.loc[idx, :] = cell_info
-
-        cleaned_edge_cells = pd.concat([margin_cells, edge_cells_unique])
-
-        return cleaned_edge_cells.sort_index()
-
-    def _remove_overlap(self, cleaned_edge_cells: pd.DataFrame) -> pd.DataFrame:
-        """Remove overlapping cells from the provided DataFrame
-
-        Args:
-            cleaned_edge_cells (pd.DataFrame): DataFrame to be cleaned
-
-        Returns:
-            pd.DataFrame: Cleaned DataFrame
+        self.model.eval()
+        self.model.to(self.device)
+    
+    
+    def __get_dataloader(self, img_paths, batch_size):
         """
-        merged_cells = cleaned_edge_cells
-
-        for iteration in range(20):
-            poly_list = []
-            for idx, cell_info in merged_cells.iterrows():
-                poly = Polygon(cell_info["contour"])
-                if not poly.is_valid:
-                    self.logger.debug("Found invalid polygon - Fixing with buffer 0")
-                    multi = poly.buffer(0)
-                    if isinstance(multi, MultiPolygon):
-                        if len(multi) > 1:
-                            poly_idx = np.argmax([p.area for p in multi])
-                            poly = multi[poly_idx]
-                        else:
-                            poly = multi[0]
-                    poly = Polygon(poly)
-                poly.uid = idx
-                poly_list.append(poly)
-
-            tree = STRtree(poly_list)
-            merged_idx = deque()
-            iterated_cells = set()
-            overlaps = 0
-
-            for query_poly in poly_list:
-                if query_poly.uid not in iterated_cells:
-                    intersected_polygons = tree.query(query_poly)
-                    if len(intersected_polygons) > 1:
-                        submergers = []
-                        for inter_poly in intersected_polygons:
-                            if inter_poly.uid != query_poly.uid and inter_poly.uid not in iterated_cells:
-                                if query_poly.intersection(inter_poly).area / query_poly.area > 0.01 or \
-                                   query_poly.intersection(inter_poly).area / inter_poly.area > 0.01:
-                                    overlaps += 1
-                                    submergers.append(inter_poly)
-                                    iterated_cells.add(inter_poly.uid)
-                        if len(submergers) == 0:
-                            merged_idx.append(query_poly.uid)
-                        else:
-                            selected_poly_index = np.argmax(np.array([p.area for p in submergers]))
-                            selected_poly_uid = submergers[selected_poly_index].uid
-                            merged_idx.append(selected_poly_uid)
-                    else:
-                        merged_idx.append(query_poly.uid)
-                    iterated_cells.add(query_poly.uid)
-
-            self.logger.info(f"Iteration {iteration}: Found overlap of # cells: {overlaps}")
-            if overlaps == 0:
-                self.logger.info("Found all overlapping cells")
-                break
-            elif iteration == 20:
-                self.logger.info(
-                    f"Not all doubled cells removed, still {overlaps} to remove. For performance issues, we stop iterations now."
-                )
-            merged_cells = cleaned_edge_cells.loc[cleaned_edge_cells.index.isin(merged_idx)].sort_index()
-
-        return merged_cells.sort_index()
-
-    def convert_to_geojson(self, polygons: bool = False) -> list[dict]:
-        """Convert the post-processed cells to GeoJSON format
-
-        Args:
-            polygons (bool, optional): If polygon segmentations (True) or detection points (False). Defaults to False.
-
-        Returns:
-            list[dict]: GeoJSON-like list
+        get dataloader for dataset based on input img_paths (here we use img_paths for each nct class)
         """
-        self.logger.info("Converting post-processed cells to GeoJSON")
-        cell_list = self.post_process_cells().to_dict(orient='records')
-        geojson_data = convert_geojson(cell_list, polygons=polygons)
-        return geojson_data
+        mean = (0.5, 0.5, 0.5)
+        std = (0.5, 0.5, 0.5)
+        inference_transforms = T.Compose(
+            [T.ToTensor(), T.Normalize(mean=mean, std=std)]
+        )
+        dataset = PatchDataset(img_paths, inference_transforms)
+        
+        # copied from cell_detection.py (idk what it does)
+        num_workers = int(3 / 4 * os.cpu_count())
+        if num_workers is None:
+            num_workers = 16
+        num_workers = int(np.clip(num_workers, 1, 2 * batch_size))
+        
+        dataloader = DataLoader(
+                dataset, batch_size=batch_size, num_workers=num_workers, shuffle=False
+            )
+        return dataloader
+    
+    
+    def inference_step(self, inference_loader, patch_class):
+        """
+        do inference for 1 class
+        """
+                
+        data_l = tqdm(inference_loader, total=len(inference_loader), unit='batch')
+        all_instance_data = []  # Prepare to collect all instance data
+        all_file_names = []  # Collect all file names
 
-def save_geojson(geojson_data, output_file):
-    with open(output_file, 'w') as f:
-        geojson.dump(geojson_data, f)
+        with torch.no_grad():
+            for batch_idx, (batch, file_names) in enumerate(data_l):
+                batch = batch.to(self.device)
+                predictions = self.model(batch)
+                predictions["nuclei_binary_map"] = F.softmax(
+                    predictions["nuclei_binary_map"], dim=1
+                )  # shape: (batch_size, 2, H, W)
+                predictions["nuclei_type_map"] = F.softmax(
+                    predictions["nuclei_type_map"], dim=1
+                )  # shape: (batch_size, num_nuclei_classes, H, W)
+                # get the instance types
+                (
+                    _,
+                    instance_types,
+                ) = self.model.calculate_instance_map(predictions, magnification=self.config['data.magnification'])
+                
+                all_instance_data.extend(instance_types) # Collect all instance_types
+                all_file_names.extend(file_names) # Collect all file names
+                
+                data_l.set_postfix_str(f'generate bbox for {patch_class}') # displays class name in tqdm
+
+        # After processing all batches, save the results
+        return all_instance_data, all_file_names
+    
+    def save_bbox_to_json(self, patch_class, instance_types, file_names, output_directory):
+        all_instance_data = []
+
+        # Process each image in the batch
+        for img_idx in range(len(instance_types)):
+            instance_data = instance_types[img_idx]
+            
+            image_id = int(img_idx)  # Convert to standard Python int
+            file_name = file_names[img_idx]  # Get the specific file name for this image
+
+            # Initialize bbox list and bbox data
+            bbox_list = []
+
+            if instance_data:  # Check if instance_data is not empty
+                for key, value in instance_data.items():
+                    bbox = value['bbox']
+
+                    flipped_bbox = [
+                        int(bbox[0][1]), int(bbox[0][0]),  # Convert y1, x1 to int
+                        int(bbox[1][1]), int(bbox[1][0])   # Convert y2, x2 to int
+                    ]
+
+                    bbox_entry = {
+                        "image_id": image_id,
+                        "coordinates": flipped_bbox,  # Use flipped coordinates
+                        "type": int(value['type']),  # Convert to standard Python int
+                        "type_prob": float(value['type_prob'])  # Ensure type_prob is a float
+                    }
+                    bbox_list.append(bbox_entry)
+
+            # JSON structure for each image
+            json_data = {
+                "image_id": image_id,  # Use same image ID as in the instance data
+                "height": 224,         # Set image height (should be batch.shape[2])
+                "width": 224,          # Set image width (should be batch.shape[3])
+                "file_name": file_name,  # Use the actual file name from the batch
+                "bbox": bbox_list      # Bounding box data (can be empty)
+            }
+
+            all_instance_data.append(json_data)
+
+        # After all batches are processed, save the data to a JSON file
+        if all_instance_data:
+            if not os.path.exists(output_directory):
+                os.makedirs(output_directory)
+            
+            # Save to JSON file
+            json_file = os.path.join(output_directory, f"{patch_class}_bboxes.json")
+            with open(json_file, 'w') as f:
+                json.dump(all_instance_data, f, indent=4)
+            
+            print(f"Bounding box data saved to {json_file}")
 
 
-# Usage 
-initialize_cellvit()
+    def patch_inference(self, root_dir, file_extension, batch_size):
+        """
+        runner for patch inference
+        takes root_dir and run inference for each class
+        
+        """
+        # gets all files with file_extension from root_dir
+        patch_files = sorted(Path(root_dir).glob(f"**/*{file_extension}")) # maybe needs filtering
+        
+        # divide file_paths list into dictionary: keys=classes : value=list of image_paths        
+        class_dict = {}
+        for file_path in patch_files:
+            class_name = file_path.parts[-2]
 
-# Set up global logger
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+            if class_name not in class_dict:
+                class_dict[class_name] = []  
 
-image = load_tiff_image("/mnt/volume/datasets/NCT-CRC-HE-100K/ADI/ADI-AAAMHQMK.tif")
+            class_dict[class_name].append(file_path)
+            
+        for patch_class, img_paths in class_dict.items():
+            
+            ############# custom testing only run for ADI, remove for final version #####################
+            #if patch_class != "BACK":
+                #continue
+            
+            inference_loader = self.__get_dataloader(img_paths=img_paths, batch_size=batch_size)
+            instance_types, file_names = self.inference_step(inference_loader=inference_loader, patch_class=patch_class)
+            
+            self.save_bbox_to_json(patch_class=patch_class, instance_types=instance_types, file_names=file_names, output_directory=f"/mnt/volume/sabrina/cellvit_seg/{patch_class}")
+        
 
-img_norm = process_image(image)
+class PatchDataset(Dataset):
+    """
+    Dataset for patches e.g., NCT-CRC-100k
+    """
+    def __init__(self, image_paths, transform=None):
+        super(PatchDataset, self).__init__()
+        self.image_paths = image_paths
+        self.transform = transform
 
-instance_types = model_inference(img_norm)
-print(instance_types)
+    def __len__(self):
+        return len(self.image_paths)
 
-processor = CellPostProcessor(instance_types, logger)
+    def __getitem__(self, idx):
+        img_path = self.image_paths[idx]
+        img = Image.open(img_path)
 
-post_processed_cells = processor.post_process_cells()
+        if self.transform:
+            img = self.transform(img)
 
-geojson_data = processor.convert_to_geojson(polygons=True)
+        return img, img_path.name  # Return both the image tensor and the file name
 
-save_geojson(geojson_data, "/mnt/volume/sabrina/inference_cellvit_experiment_nct.geojson")
+
+if __name__ == "__main__":
+    img_root = "/mnt/volume/datasets/NCT-CRC-HE-100K/"
+    file_extension = ".tif"
+    model_path = "/mnt/volume/mathias/pretrained_models/CellViT-256-x20.pth"
+    gpu = 0
+    batch_size = 128 # 128 highest maybe try 256
+    
+    cell_detection = InferenceCellViT(model_path=model_path, gpu=gpu)
+    cell_detection.patch_inference(root_dir=img_root, file_extension=file_extension, batch_size=batch_size)

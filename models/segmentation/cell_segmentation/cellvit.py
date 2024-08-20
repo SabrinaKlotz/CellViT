@@ -330,7 +330,7 @@ class CellViT(nn.Module):
         return decoder
 
     def calculate_instance_map(
-        self, predictions: OrderedDict, magnification: Literal[20, 40] = 40
+        self, predictions: OrderedDict, magnification: Literal[20, 40] = 20
     ) -> Tuple[torch.Tensor, List[dict]]:
         """Calculate Instance Map from network predictions (after Softmax output)
 

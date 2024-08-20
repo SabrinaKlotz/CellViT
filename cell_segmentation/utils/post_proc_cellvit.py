@@ -34,7 +34,7 @@ class DetectionCellPostProcessor:
     def __init__(
         self,
         nr_types: int = None,
-        magnification: Literal[20, 40] = 40,
+        magnification: Literal[20, 40] = 20,
         gt: bool = False,
     ) -> None:
         """DetectionCellPostProcessor for postprocessing prediction maps and get detected cells
@@ -61,8 +61,8 @@ class DetectionCellPostProcessor:
         else:
             raise NotImplementedError("Unknown magnification")
         if gt:  # to not supress something in gt!
-            self.object_size = 100
-            self.k_size = 21
+            self.object_size = 3
+            self.k_size = 11
 
     def post_process_cell_segmentation(
         self,
@@ -154,7 +154,7 @@ class DetectionCellPostProcessor:
         return pred_inst, inst_info_dict
 
     def __proc_np_hv(
-        self, pred: np.ndarray, object_size: int = 10, ksize: int = 21
+        self, pred: np.ndarray, object_size: int = 13, ksize: int = 11
     ) -> np.ndarray:
         """Process Nuclei Prediction with XY Coordinate Map and generate instance map (each instance has unique integer)
 
