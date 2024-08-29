@@ -150,6 +150,7 @@ class InferenceCellViT:
         # After processing all batches, save the results
         return all_instance_data, all_file_names
     
+    
     def save_bbox_to_json(self, patch_class, instance_types, file_names, output_directory):
         all_instance_data = []
 
@@ -226,8 +227,8 @@ class InferenceCellViT:
         for patch_class, img_paths in class_dict.items():
             
             ############# custom testing only run for ADI, remove for final version #####################
-            #if patch_class != "BACK":
-                #continue
+            if patch_class != "ADI":
+                continue
             
             inference_loader = self.__get_dataloader(img_paths=img_paths, batch_size=batch_size)
             instance_types, file_names = self.inference_step(inference_loader=inference_loader, patch_class=patch_class)
